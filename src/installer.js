@@ -96,6 +96,39 @@ export async function install({ scope, sounds }) {
 }
 
 /**
+ * Read existing klaudio sound selections from settings.
+ * Returns a map of eventId -> soundFilePath (from the sounds/ dir).
+ */
+export async function getExistingSounds(scope) {
+  const claudeDir = getTargetDir(scope);
+  const settingsFile = join(claudeDir, "settings.json");
+  const sounds = {};
+
+  try {
+    const existing = await readFile(settingsFile, "utf-8");
+    const settings = JSON.parse(existing);
+    if (!settings.hooks) return sounds;
+
+    for (const [eventId, event] of Object.entries(EVENTS)) {
+      const hookEntries = settings.hooks[event.hookEvent];
+      if (!hookEntries) continue;
+      const entry = hookEntries.find((e) => e._klonk);
+      if (!entry?.hooks?.[0]?.command) continue;
+
+      // Extract file path from the play command
+      // Commands contain the path in quotes: ... "path/to/file" ...
+      const match = entry.hooks[0].command.match(/"([^"]+\.(wav|mp3|ogg|flac|aac))"/);
+      if (match) {
+        const soundPath = match[1].replace(/\//g, join("a", "b").includes("\\") ? "\\" : "/");
+        sounds[eventId] = soundPath;
+      }
+    }
+  } catch { /* no existing config */ }
+
+  return sounds;
+}
+
+/**
  * Uninstall klonk hooks from settings.
  */
 export async function uninstall(scope) {

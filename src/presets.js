@@ -12,15 +12,15 @@ const SOUNDS_DIR = isCompiledBinary
  * Sound events that can be configured.
  */
 export const EVENTS = {
-  stop: {
-    name: "Task Complete",
-    description: "Plays when Claude finishes a response",
-    hookEvent: "Stop",
-  },
   notification: {
     name: "Notification",
     description: "Plays when Claude needs your attention",
     hookEvent: "Notification",
+  },
+  stop: {
+    name: "Task Complete",
+    description: "Plays when Claude finishes a response",
+    hookEvent: "Stop",
   },
 };
 

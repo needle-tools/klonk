@@ -5,7 +5,7 @@ import Spinner from "ink-spinner";
 import { PRESETS, EVENTS } from "./presets.js";
 import { playSoundWithCancel, getWavDuration } from "./player.js";
 import { getAvailableGames } from "./scanner.js";
-import { install, uninstall } from "./installer.js";
+import { install, uninstall, getExistingSounds } from "./installer.js";
 import { getVgmstreamPath, findPackedAudioFiles, extractToWav } from "./extractor.js";
 import { getCachedExtraction, cacheExtraction, categorizeLooseFiles, getCategories, sortFilesByPriority } from "./cache.js";
 import { basename, dirname } from "node:path";
@@ -13,8 +13,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const MAX_PLAY_SECONDS = 10;
+const ACCENT = "#76C41E"; // Needle green-yellow midpoint
 
 const h = React.createElement;
+
+// ── Custom SelectInput components (bright colors for CMD) ────
+const Indicator = ({ isSelected }) =>
+  h(Box, { marginRight: 1 }, isSelected
+    ? h(Text, { color: ACCENT }, "❯")
+    : h(Text, null, " "));
+
+const Item = ({ isSelected, label }) =>
+  h(Text, { color: isSelected ? ACCENT : undefined, bold: isSelected }, label);
 
 // ── Screens ─────────────────────────────────────────────────────
 const SCREEN = {
@@ -35,7 +45,7 @@ const isUninstallMode = process.argv.includes("--uninstall") || process.argv.inc
 // ── Header component ────────────────────────────────────────────
 const Header = () =>
   h(Box, { flexDirection: "column", marginBottom: 1 },
-    h(Text, { bold: true, color: "cyan" }, "  🔊 Klonk"),
+    h(Text, { bold: true, color: ACCENT }, "  klaudio"),
     h(Text, { dimColor: true }, isUninstallMode
       ? "  Remove sound effects from Claude Code"
       : "  Add sound effects to your Claude Code sessions"),
@@ -58,7 +68,7 @@ const ScopeScreen = ({ onNext }) => {
   return h(Box, { flexDirection: "column" },
     h(Text, { bold: true }, "  Where should sounds be installed?"),
     h(Box, { marginLeft: 2 },
-      h(SelectInput, { items, onSelect: (item) => onNext(item.value) }),
+      h(SelectInput, { indicatorComponent: Indicator, itemComponent: Item, items, onSelect: (item) => onNext(item.value) }),
     ),
   );
 };
@@ -72,14 +82,14 @@ const PresetScreen = ({ onNext, onBack }) => {
       label: `${p.icon} ${p.name}  — ${p.description}`,
       value: id,
     })),
-    { label: "🎯 Scan local games  — find sounds from Steam/Epic", value: "_scan" },
+    { label: "🕹️  Scan local games  — find sounds from Steam/Epic", value: "_scan" },
     { label: "📁 Custom files  — provide your own sound files", value: "_custom" },
   ];
 
   return h(Box, { flexDirection: "column" },
     h(Text, { bold: true }, "  Choose a sound preset:"),
     h(Box, { marginLeft: 2 },
-      h(SelectInput, { items, onSelect: (item) => onNext(item.value) }),
+      h(SelectInput, { indicatorComponent: Indicator, itemComponent: Item, items, onSelect: (item) => onNext(item.value) }),
     ),
     h(NavHint, { back: true }),
   );
@@ -182,7 +192,7 @@ const PreviewScreen = ({ presetId, sounds, onAccept, onBack, onUpdateSound }) =>
         const d = durations[eid];
         const dStr = d != null ? ` (${d > MAX_PLAY_SECONDS ? MAX_PLAY_SECONDS : d}s)` : "";
         return h(Text, { key: eid, marginLeft: 2,
-          color: i === currentEvent ? "cyan" : i < currentEvent ? "green" : "white",
+          color: i === currentEvent ? "#00FFFF" : i < currentEvent ? "green" : "white",
           bold: i === currentEvent,
         },
           i < currentEvent ? "  ✓ " : i === currentEvent ? "  ▸ " : "    ",
@@ -292,7 +302,7 @@ const GamePickScreen = ({ onNext, onExtract, onBack }) => {
   return h(Box, { flexDirection: "column" },
     scanning
       ? h(Box, { marginLeft: 2 },
-          h(Text, { color: "cyan" }, h(Spinner, { type: "dots" })),
+          h(Text, { color: ACCENT }, h(Spinner, { type: "dots" })),
           h(Text, null, ` ${scanStatus}`),
           games.length > 0
             ? h(Text, { color: "green" }, `  (${games.length} found)`)
@@ -312,7 +322,7 @@ const GamePickScreen = ({ onNext, onExtract, onBack }) => {
         : null,
     items.length > 0
       ? h(Box, { marginLeft: 2 },
-          h(SelectInput, {
+          h(SelectInput, { indicatorComponent: Indicator, itemComponent: Item,
             items,
             limit: 15,
             onSelect: (item) => {
@@ -351,10 +361,9 @@ const CATEGORY_ICONS = {
   ambient: "🌿", music: "🎵", other: "📦", all: "📂",
 };
 
-const GameSoundsScreen = ({ game, onDone, onBack }) => {
+const GameSoundsScreen = ({ game, sounds, onSelectSound, onDone, onBack }) => {
   const eventIds = Object.keys(EVENTS);
   const [currentEvent, setCurrentEvent] = useState(0);
-  const [selections, setSelections] = useState({});
   const [playing, setPlaying] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [highlightedFile, setHighlightedFile] = useState(null);
@@ -435,7 +444,16 @@ const GameSoundsScreen = ({ game, onDone, onBack }) => {
   }, [highlightedFile, autoPreview]);
 
   useInput((input, key) => {
-    if (key.escape) {
+    if (key.tab) {
+      // Tab cycles through events + Apply tab (if any sounds assigned)
+      stopPlayback();
+      const hasSounds = Object.values(sounds).some(Boolean);
+      const tabCount = hasSounds ? eventIds.length + 1 : eventIds.length;
+      setCurrentEvent((i) => (i + 1) % tabCount);
+      setHighlightedFile(null);
+      setActiveCategory(null);
+      setFilter("");
+    } else if (key.escape) {
       if (playing) {
         stopPlayback();
       } else if (filter) {
@@ -450,7 +468,7 @@ const GameSoundsScreen = ({ game, onDone, onBack }) => {
     } else if (input === "p" && !key.ctrl && !key.meta) {
       // Toggle auto-preview
       setAutoPreview((prev) => {
-        if (prev) stopPlayback(); // turning off — stop current sound
+        if (prev) stopPlayback();
         return !prev;
       });
     } else if (activeCategory !== null) {
@@ -476,33 +494,96 @@ const GameSoundsScreen = ({ game, onDone, onBack }) => {
   const eventInfo = EVENTS[eventId];
   const stepLabel = `(${currentEvent + 1}/${eventIds.length})`;
 
-  const advance = useCallback((newSelections) => {
+  const advance = useCallback(() => {
     stopPlayback();
-    if (currentEvent < eventIds.length - 1) {
-      setCurrentEvent((i) => i + 1);
-      setHighlightedFile(null);
-      setActiveCategory(null);
-      setFilter("");
+    // Move to next event that hasn't been assigned yet, or wrap around
+    const nextUnassigned = eventIds.findIndex((eid, i) => i > currentEvent && !sounds[eid]);
+    if (nextUnassigned >= 0) {
+      setCurrentEvent(nextUnassigned);
     } else {
-      onDone(newSelections);
+      // All done or wrapped — go to next sequential
+      setCurrentEvent((i) => Math.min(i + 1, eventIds.length - 1));
     }
-  }, [currentEvent, eventIds.length, onDone, stopPlayback]);
+    setHighlightedFile(null);
+    setActiveCategory(null);
+    setFilter("");
+  }, [currentEvent, eventIds, sounds, stopPlayback]);
 
   const nowPlayingFile = playing && highlightedFile && highlightedFile !== "_skip"
     ? highlightedFile : null;
 
-  const headerBox = h(Box, { marginLeft: 2, marginBottom: 1, flexDirection: "column", borderStyle: "round", borderColor: nowPlayingFile ? "green" : "cyan", paddingX: 2 },
-    h(Text, { bold: true, color: nowPlayingFile ? "green" : "cyan" },
-      `${game.name} — ${eventInfo.name} ${stepLabel}`,
+  const hasAnySounds = Object.values(sounds).some(Boolean);
+  const allAssigned = eventIds.every((eid) => sounds[eid]);
+  // currentEvent can be eventIds.length to mean "Done" tab
+  const onDoneTab = currentEvent >= eventIds.length;
+
+  const headerBox = h(Box, { marginLeft: 2, marginBottom: 1, flexDirection: "column", borderStyle: "round", borderColor: nowPlayingFile ? "green" : ACCENT, paddingX: 2 },
+    h(Text, { bold: true, color: nowPlayingFile ? "green" : ACCENT },
+      `${game.name}`,
     ),
-    h(Text, { dimColor: true }, `Triggers: ${eventInfo.description}`),
+    h(Box, { marginTop: 0, gap: 2 },
+      ...eventIds.map((eid, i) => {
+        const assigned = sounds[eid];
+        const isCurrent = i === currentEvent;
+        return h(Text, {
+          key: eid,
+          bold: isCurrent,
+          color: isCurrent ? ACCENT : assigned ? "green" : "gray",
+        }, isCurrent ? `▸ ${EVENTS[eid].name}` : assigned ? `✓ ${EVENTS[eid].name}: ${basename(assigned)}` : `· ${EVENTS[eid].name}`);
+      }),
+      h(Text, {
+        key: "_done",
+        bold: onDoneTab,
+        color: onDoneTab ? ACCENT : hasAnySounds ? "green" : "gray",
+      }, onDoneTab ? "▸ ✓ Apply" : hasAnySounds ? "· ✓ Apply" : "· Apply"),
+      h(Text, { dimColor: true }, "(tab)"),
+    ),
+    onDoneTab
+      ? h(Text, { dimColor: true }, "Press enter to apply your sound selections")
+      : h(Text, { dimColor: true }, `${eventInfo.description}`),
+  );
+
+  const nowPlayingBar = h(Box, { marginLeft: 2, height: 1 },
     nowPlayingFile
       ? h(Box, null,
           h(Text, { color: "green", bold: true }, h(Spinner, { type: "dots" })),
           h(Text, { color: "green", bold: true }, ` Now playing: ${basename(nowPlayingFile)}  ${elapsed}s / ${MAX_PLAY_SECONDS}s max`),
         )
-      : null,
+      : h(Text, { dimColor: true }, " "),
   );
+
+  // Apply tab: show summary and confirm
+  if (onDoneTab) {
+    const confirmItems = [
+      { label: "✓ Apply sounds", value: "apply" },
+      { label: "← Back to editing", value: "back" },
+    ];
+    return h(Box, { flexDirection: "column" },
+      headerBox,
+      h(Box, { flexDirection: "column", marginLeft: 4, marginBottom: 1 },
+        ...eventIds.map((eid) =>
+          h(Text, { key: eid, color: sounds[eid] ? "green" : "gray" },
+            sounds[eid] ? `  ✓ ${EVENTS[eid].name}: ${basename(sounds[eid])}` : `  · ${EVENTS[eid].name}: (skipped)`,
+          ),
+        ),
+      ),
+      h(Box, { marginLeft: 2 },
+        h(SelectInput, { indicatorComponent: Indicator, itemComponent: Item,
+          items: confirmItems,
+          onSelect: (item) => {
+            if (item.value === "apply") {
+              stopPlayback();
+              onDone();
+            } else {
+              setCurrentEvent(0);
+            }
+          },
+        }),
+      ),
+      nowPlayingBar,
+      h(NavHint, { back: true }),
+    );
+  }
 
   // Phase 0: Category picker
   if (activeCategory === null && showCategoryPicker) {
@@ -519,19 +600,18 @@ const GameSoundsScreen = ({ game, onDone, onBack }) => {
       headerBox,
       h(Text, { bold: true, marginLeft: 4 }, "Pick a category:"),
       h(Box, { marginLeft: 2 },
-        h(SelectInput, {
+        h(SelectInput, { indicatorComponent: Indicator, itemComponent: Item,
           items: catItems,
           onSelect: (item) => {
             if (item.value === "_skip") {
-              const newSelections = { ...selections };
-              setSelections(newSelections);
-              advance(newSelections);
+              advance();
             } else {
               setActiveCategory(item.value);
             }
           },
         }),
       ),
+      nowPlayingBar,
       h(NavHint, { back: true }),
     );
   }
@@ -566,7 +646,7 @@ const GameSoundsScreen = ({ game, onDone, onBack }) => {
   return h(Box, { flexDirection: "column" },
     headerBox,
     catLabel
-      ? h(Text, { bold: true, color: "cyan", marginLeft: 4 }, catLabel)
+      ? h(Text, { bold: true, color: ACCENT, marginLeft: 4 }, catLabel)
       : null,
     h(Box, { marginLeft: 4 },
       h(Text, { color: autoPreview ? "green" : "gray", bold: autoPreview },
@@ -585,7 +665,7 @@ const GameSoundsScreen = ({ game, onDone, onBack }) => {
         : null,
     fileItems.length > 0
       ? h(Box, { marginLeft: 2 },
-          h(SelectInput, {
+          h(SelectInput, { indicatorComponent: Indicator, itemComponent: Item,
             items: fileItems,
             limit: 15,
             onHighlight: (item) => {
@@ -594,20 +674,17 @@ const GameSoundsScreen = ({ game, onDone, onBack }) => {
             onSelect: (item) => {
               stopPlayback();
               if (item.value === "_skip") {
-                const newSelections = { ...selections };
-                setSelections(newSelections);
-                advance(newSelections);
+                advance();
               } else {
-                // Enter = accept this sound
-                const newSelections = { ...selections, [eventId]: item.value };
-                setSelections(newSelections);
-                advance(newSelections);
+                onSelectSound(eventId, item.value);
+                advance();
               }
             },
           }),
         )
       : h(Text, { color: "yellow", marginLeft: 4 }, "No matches."),
-    h(NavHint, { back: true, extra: "enter accept" }),
+    nowPlayingBar,
+    h(NavHint, { back: true, extra: "tab switch event" }),
   );
 };
 
@@ -702,10 +779,10 @@ const ExtractingScreen = ({ game, onDone, onBack }) => {
   }, []);
 
   return h(Box, { flexDirection: "column" },
-    h(Box, { marginLeft: 2, flexDirection: "column", borderStyle: "round", borderColor: "cyan", paddingX: 2 },
-      h(Text, { bold: true, color: "cyan" }, `Extracting audio from ${game.name}`),
+    h(Box, { marginLeft: 2, flexDirection: "column", borderStyle: "round", borderColor: ACCENT, paddingX: 2 },
+      h(Text, { bold: true, color: ACCENT }, `Extracting audio from ${game.name}`),
       h(Box, { marginTop: 1 },
-        h(Text, { color: "cyan" }, h(Spinner, { type: "dots" })),
+        h(Text, { color: ACCENT }, h(Spinner, { type: "dots" })),
         h(Text, null, ` ${status}`),
       ),
       extracted > 0
@@ -738,7 +815,7 @@ const ConfirmScreen = ({ scope, sounds, onConfirm, onBack }) => {
       ),
     ),
     h(Box, { marginTop: 1, marginLeft: 2 },
-      h(SelectInput, { items, onSelect: (item) => {
+      h(SelectInput, { indicatorComponent: Indicator, itemComponent: Item, items, onSelect: (item) => {
         if (item.value === "yes") onConfirm();
         else onBack();
       }}),
@@ -760,7 +837,7 @@ const InstallingScreen = ({ scope, sounds, onDone }) => {
   }, []);
 
   return h(Box, { marginLeft: 2 },
-    h(Text, { color: "cyan" }, h(Spinner, { type: "dots" })),
+    h(Text, { color: ACCENT }, h(Spinner, { type: "dots" })),
     h(Text, null, " Installing sounds..."),
   );
 };
@@ -831,7 +908,7 @@ const UninstallApp = () => {
     return h(Box, { flexDirection: "column" },
       h(Header, null),
       h(Box, { marginLeft: 2 },
-        h(Text, { color: "cyan" }, h(Spinner, { type: "dots" })),
+        h(Text, { color: ACCENT }, h(Spinner, { type: "dots" })),
         h(Text, null, " Removing sounds..."),
       ),
     );
@@ -868,7 +945,13 @@ const InstallApp = () => {
     switch (screen) {
       case SCREEN.SCOPE:
         return h(ScopeScreen, {
-          onNext: (s) => { setScope(s); setScreen(SCREEN.PRESET); },
+          onNext: (s) => {
+            setScope(s);
+            getExistingSounds(s).then((existing) => {
+              if (Object.keys(existing).length > 0) setSounds(existing);
+            });
+            setScreen(SCREEN.PRESET);
+          },
         });
 
       case SCREEN.PRESET:
@@ -928,8 +1011,11 @@ const InstallApp = () => {
       case SCREEN.GAME_SOUNDS:
         return h(GameSoundsScreen, {
           game: selectedGame,
-          onDone: (gameSounds) => {
-            setSounds(gameSounds);
+          sounds,
+          onSelectSound: (eventId, path) => {
+            setSounds((prev) => ({ ...prev, [eventId]: path }));
+          },
+          onDone: () => {
             setScreen(SCREEN.CONFIRM);
           },
           onBack: () => setScreen(SCREEN.GAME_PICK),
