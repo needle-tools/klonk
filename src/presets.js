@@ -16,11 +16,13 @@ export const EVENTS = {
     name: "Notification",
     description: "Plays when Claude needs your attention",
     hookEvent: "Notification",
+    copilotHookEvent: null, // Copilot doesn't have this yet
   },
   stop: {
     name: "Task Complete",
     description: "Plays when Claude finishes a response",
     hookEvent: "Stop",
+    copilotHookEvent: "sessionEnd",
   },
 };
 

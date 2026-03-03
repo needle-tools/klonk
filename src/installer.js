@@ -88,11 +88,66 @@ export async function install({ scope, sounds }) {
   // Write settings
   await writeFile(settingsFile, JSON.stringify(settings, null, 2) + "\n", "utf-8");
 
+  // Also install Copilot coding agent hooks (.github/hooks/klaudio.json)
+  await installCopilotHooks(installedSounds, scope);
+
   return {
     soundsDir,
     settingsFile,
     installedSounds,
   };
+}
+
+/**
+ * Install hooks for GitHub Copilot coding agent.
+ * Writes .github/hooks/klaudio.json in the Copilot format.
+ */
+async function installCopilotHooks(installedSounds, scope) {
+  // Find the repo root (.github lives at repo root)
+  const repoRoot = scope === "global" ? null : process.cwd();
+  if (!repoRoot) return; // Copilot hooks are project-scoped only
+
+  const hooksDir = join(repoRoot, ".github", "hooks");
+  const hooksFile = join(hooksDir, "klaudio.json");
+
+  await mkdir(hooksDir, { recursive: true });
+
+  // Read existing file if present
+  let config = { version: 1, hooks: {} };
+  try {
+    const existing = await readFile(hooksFile, "utf-8");
+    config = JSON.parse(existing);
+    if (!config.hooks) config.hooks = {};
+  } catch { /* start fresh */ }
+
+  for (const [eventId, soundPath] of Object.entries(installedSounds)) {
+    const event = EVENTS[eventId];
+    if (!event?.copilotHookEvent) continue;
+
+    const normalized = soundPath.replace(/\\/g, "/");
+    const bashCmd = `afplay "${normalized}" 2>/dev/null & aplay "${normalized}" 2>/dev/null &`;
+    const psCmd = `Add-Type -AssemblyName PresentationCore; $p = New-Object System.Windows.Media.MediaPlayer; $p.Open([System.Uri]::new('${normalized.replace(/\//g, "\\")}')); Start-Sleep -Milliseconds 200; $p.Play(); Start-Sleep -Seconds 2`;
+
+    if (!config.hooks[event.copilotHookEvent]) {
+      config.hooks[event.copilotHookEvent] = [];
+    }
+
+    // Remove existing klaudio entries
+    config.hooks[event.copilotHookEvent] = config.hooks[event.copilotHookEvent].filter(
+      (entry) => !entry._klaudio
+    );
+
+    config.hooks[event.copilotHookEvent].push({
+      _klaudio: true,
+      type: "command",
+      bash: bashCmd,
+      powershell: psCmd,
+      timeoutSec: 10,
+      comment: `klaudio: ${event.name}`,
+    });
+  }
+
+  await writeFile(hooksFile, JSON.stringify(config, null, 2) + "\n", "utf-8");
 }
 
 /**
@@ -154,8 +209,22 @@ export async function uninstall(scope) {
     }
 
     await writeFile(settingsFile, JSON.stringify(settings, null, 2) + "\n", "utf-8");
-    return true;
-  } catch {
-    return false;
-  }
+  } catch { /* no existing config */ }
+
+  // Also clean up Copilot hooks
+  await uninstallCopilotHooks(scope);
+
+  return true;
+}
+
+/**
+ * Remove klaudio entries from .github/hooks/klaudio.json.
+ */
+async function uninstallCopilotHooks(scope) {
+  if (scope === "global") return;
+  const hooksFile = join(process.cwd(), ".github", "hooks", "klaudio.json");
+  try {
+    const { unlink } = await import("node:fs/promises");
+    await unlink(hooksFile);
+  } catch { /* file doesn't exist */ }
 }
