@@ -65,29 +65,31 @@ export async function getVgmstreamPath(onProgress) {
   await mkdir(TOOLS_DIR, { recursive: true });
 
   // Download the appropriate release
-  const releaseUrl = os === "win32"
+  const isWindows = os === "win32";
+  const releaseUrl = isWindows
     ? "https://github.com/vgmstream/vgmstream-releases/releases/download/nightly/vgmstream-win64.zip"
     : os === "darwin"
-      ? "https://github.com/vgmstream/vgmstream-releases/releases/download/nightly/vgmstream-macos.zip"
-      : "https://github.com/vgmstream/vgmstream-releases/releases/download/nightly/vgmstream-linux.zip";
+      ? "https://github.com/vgmstream/vgmstream-releases/releases/download/nightly/vgmstream-mac-cli.tar.gz"
+      : "https://github.com/vgmstream/vgmstream-releases/releases/download/nightly/vgmstream-linux-cli.tar.gz";
 
-  const zipPath = join(tmpdir(), "vgmstream.zip");
+  const archiveExt = isWindows ? ".zip" : ".tar.gz";
+  const archivePath = join(tmpdir(), `vgmstream${archiveExt}`);
 
   // Download using Node.js fetch
   const response = await fetch(releaseUrl, { redirect: "follow" });
   if (!response.ok) throw new Error(`Failed to download vgmstream: ${response.status}`);
 
-  const fileStream = createWriteStream(zipPath);
+  const fileStream = createWriteStream(archivePath);
   await pipeline(response.body, fileStream);
 
   if (onProgress) onProgress("Extracting vgmstream-cli...");
 
-  // Extract using tar (handles zip on modern systems) or PowerShell on Windows
-  if (os === "win32") {
+  // Extract: PowerShell for Windows, tar for macOS/Linux
+  if (isWindows) {
     await new Promise((resolve, reject) => {
       execFile("powershell.exe", [
         "-NoProfile", "-Command",
-        `Expand-Archive -Path '${zipPath}' -DestinationPath '${TOOLS_DIR}' -Force`,
+        `Expand-Archive -Path '${archivePath}' -DestinationPath '${TOOLS_DIR}' -Force`,
       ], { windowsHide: true }, (err) => {
         if (err) reject(err);
         else resolve();
@@ -95,13 +97,21 @@ export async function getVgmstreamPath(onProgress) {
     });
   } else {
     await new Promise((resolve, reject) => {
-      execFile("unzip", ["-o", zipPath, "-d", TOOLS_DIR], (err) => {
+      execFile("tar", ["xzf", archivePath, "-C", TOOLS_DIR], (err) => {
         if (err) reject(err);
         else resolve();
       });
     });
     // Make executable
     try { await chmod(toolPath, 0o755); } catch { /* ignore */ }
+    // Remove macOS quarantine attribute so Gatekeeper doesn't block execution
+    if (os === "darwin") {
+      try {
+        await new Promise((resolve) => {
+          execFile("xattr", ["-d", "com.apple.quarantine", toolPath], () => resolve());
+        });
+      } catch { /* ignore — attribute may not exist */ }
+    }
   }
 
   // Verify it exists
