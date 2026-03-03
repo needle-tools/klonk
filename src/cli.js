@@ -453,21 +453,10 @@ const GameSoundsScreen = ({ game, sounds, onSelectSound, onDone, onBack }) => {
   // Sort files: voice first, then by priority
   const sortedFiles = hasCategories ? sortFilesByPriority(game.files) : game.files;
 
-  // Fetch durations for visible files
-  useEffect(() => {
-    for (const f of sortedFiles.slice(0, 50)) {
-      if (!fileDurations[f.path]) {
-        getWavDuration(f.path).then((dur) => {
-          if (dur != null) setFileDurations((d) => ({ ...d, [f.path]: dur }));
-        });
-      }
-    }
-  }, [game.files]);
-
-  // Filter files by category
+  // Filter files by category (no hard cap — SelectInput handles visible window)
   const categoryFiles = activeCategory && activeCategory !== "all"
-    ? sortedFiles.filter((f) => f.category === activeCategory).slice(0, 50)
-    : sortedFiles.slice(0, 50);
+    ? sortedFiles.filter((f) => f.category === activeCategory)
+    : sortedFiles;
 
   // Stop current playback helper
   const stopPlayback = useCallback(() => {
@@ -478,6 +467,15 @@ const GameSoundsScreen = ({ game, sounds, onSelectSound, onDone, onBack }) => {
     setPlaying(false);
     setElapsed(0);
   }, []);
+
+  // Lazy-fetch duration for highlighted file
+  useEffect(() => {
+    if (highlightedFile && highlightedFile !== "_skip" && !fileDurations[highlightedFile]) {
+      getWavDuration(highlightedFile).then((dur) => {
+        if (dur != null) setFileDurations((d) => ({ ...d, [highlightedFile]: dur }));
+      });
+    }
+  }, [highlightedFile]);
 
   // Auto-preview: play sound when highlighted file changes (with debounce)
   useEffect(() => {
@@ -715,7 +713,7 @@ const GameSoundsScreen = ({ game, sounds, onSelectSound, onDone, onBack }) => {
   const filterLower = filter.toLowerCase();
   const allFileItems = categoryFiles.map((f) => {
     const dur = fileDurations[f.path];
-    const durStr = dur != null ? ` (${dur > MAX_PLAY_SECONDS ? MAX_PLAY_SECONDS + "s max" : dur + "s"})` : "";
+    const durStr = dur != null ? ` (${dur}s${dur > MAX_PLAY_SECONDS ? `, preview ${MAX_PLAY_SECONDS}s` : ""})` : "";
     const catTag = (!activeCategory || activeCategory === "all") && f.category && f.category !== "other"
       ? `[${(CATEGORY_LABELS[f.category] || f.category).toUpperCase()}] ` : "";
     const name = f.displayName || f.name;
