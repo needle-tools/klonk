@@ -169,8 +169,13 @@ const ScopeScreen = ({ onNext, onMusic, tts, onToggleTts }) => {
 };
 
 // ── Screen: Preset ──────────────────────────────────────────────
-const PresetScreen = ({ onNext, onBack }) => {
+const PresetScreen = ({ existingSounds, onNext, onReapply, onBack }) => {
+  const hasExisting = existingSounds && Object.values(existingSounds).some(Boolean);
   const items = [
+    ...(hasExisting ? [{
+      label: "✓ Re-apply current sounds  — update config with current selections",
+      value: "_reapply",
+    }] : []),
     ...Object.entries(PRESETS).map(([id, p]) => ({
       label: `${p.icon} ${p.name}  — ${p.description}`,
       value: id,
@@ -180,18 +185,29 @@ const PresetScreen = ({ onNext, onBack }) => {
     { label: "🕹️  Scan your games library  — find sounds from Steam & Epic Games", value: "_scan" },
     { label: "📁 Custom files  — provide your own sound files", value: "_custom" },
   ];
-  const GAP_AT = Object.keys(PRESETS).length; // separator before non-preset options
+  const GAP_AT = (hasExisting ? 1 : 0) + Object.keys(PRESETS).length; // separator before non-preset options
   const [sel, setSel] = useState(0);
 
   useInput((input, key) => {
     if (key.escape) onBack();
     else if (input === "k" || key.upArrow) setSel((i) => Math.max(0, i - 1));
     else if (input === "j" || key.downArrow) setSel((i) => Math.min(items.length - 1, i + 1));
-    else if (key.return) onNext(items[sel].value);
+    else if (key.return) {
+      if (items[sel].value === "_reapply") onReapply();
+      else onNext(items[sel].value);
+    }
   });
 
   return h(Box, { flexDirection: "column" },
     h(Text, { bold: true }, "  Choose a sound preset:"),
+    hasExisting
+      ? h(Box, { flexDirection: "column", marginLeft: 4, marginBottom: 1 },
+          h(Text, { dimColor: true }, "Current sounds:"),
+          ...Object.entries(existingSounds).filter(([_, p]) => p).map(([eid, p]) =>
+            h(Text, { key: eid, color: "green", dimColor: true }, `  ✓ ${EVENTS[eid].name}: ${basename(p)}`),
+          ),
+        )
+      : null,
     h(Box, { flexDirection: "column", marginLeft: 2 },
       ...items.map((item, i) => h(React.Fragment, { key: item.value },
         i === GAP_AT ? h(Text, { dimColor: true }, "\n  ...or pick your own") : null,
@@ -1480,6 +1496,8 @@ const InstallApp = () => {
 
       case SCREEN.PRESET:
         return h(PresetScreen, {
+          existingSounds: sounds,
+          onReapply: () => setScreen(SCREEN.CONFIRM),
           onNext: (id) => {
             if (id === "_music") {
               setScreen(SCREEN.MUSIC_MODE);

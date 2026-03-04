@@ -1,6 +1,6 @@
 {
   "name": "klaudio",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "description": "Add sound effects to your coding sessions — play sounds when tasks complete, notifications arrive, and more",
   "type": "module",
   "bin": {
