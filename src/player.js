@@ -392,8 +392,20 @@ export async function handlePlayCommand(args) {
 
   // TTS: speak first 1-2 sentences of last_assistant_message
   if (tts && hookData.last_assistant_message) {
-    const msg = hookData.last_assistant_message;
-    // Extract first sentence only
+    // Strip markdown syntax and extract first sentence
+    const msg = hookData.last_assistant_message
+      .replace(/```[\s\S]*?```/g, "")      // remove code blocks
+      .replace(/`([^`]+)`/g, "$1")          // inline code -> text
+      .replace(/\*\*([^*]+)\*\*/g, "$1")    // **bold** -> text
+      .replace(/\*([^*]+)\*/g, "$1")        // *italic* -> text
+      .replace(/__([^_]+)__/g, "$1")        // __bold__ -> text
+      .replace(/_([^_]+)_/g, "$1")          // _italic_ -> text
+      .replace(/#{1,6}\s+/g, "")            // headings
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1") // [links](url) -> text
+      .replace(/^\s*[-*+]\s+/gm, "")        // list bullets
+      .replace(/^\s*\d+\.\s+/gm, "")        // numbered lists
+      .replace(/\n+/g, " ")                 // newlines -> spaces
+      .trim();
     const sentences = msg.match(/[^.!?]*[.!?]/g);
     const summary = sentences ? sentences[0].trim() : msg.slice(0, 100);
     await soundPromise;
