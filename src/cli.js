@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from "react"
 import { render, Box, Text, useInput, useApp } from "ink";
 import Spinner from "ink-spinner";
 import { PRESETS, EVENTS } from "./presets.js";
+import { KOKORO_PRESET_VOICES } from "./tts.js";
 import { playSoundWithCancel, getWavDuration } from "./player.js";
 import { getAvailableGames, getSystemSounds } from "./scanner.js";
 import { install, uninstall, getExistingSounds } from "./installer.js";
@@ -1409,13 +1410,13 @@ const ConfirmScreen = ({ scope, sounds, tts, onToggleTts, onConfirm, onBack }) =
 };
 
 // ── Screen: Installing ──────────────────────────────────────────
-const InstallingScreen = ({ scope, sounds, tts, onDone }) => {
+const InstallingScreen = ({ scope, sounds, tts, voice, onDone }) => {
   useEffect(() => {
     const validSounds = {};
     for (const [eventId, path] of Object.entries(sounds)) {
       if (path) validSounds[eventId] = path;
     }
-    install({ scope, sounds: validSounds, tts }).then(onDone).catch((err) => {
+    install({ scope, sounds: validSounds, tts, voice }).then(onDone).catch((err) => {
       onDone({ error: err.message });
     });
   }, []);
@@ -1661,6 +1662,7 @@ const InstallApp = () => {
           scope,
           sounds,
           tts,
+          voice: KOKORO_PRESET_VOICES[presetId],
           onDone: (result) => {
             setInstallResult(result);
             setScreen(SCREEN.DONE);

@@ -1,49 +1,94 @@
-import { execFile, spawn } from "node:child_process";
-import { mkdir, stat, rename, chmod } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { mkdir, stat, chmod, writeFile as fsWriteFile } from "node:fs/promises";
 import { createWriteStream } from "node:fs";
 import { join, basename } from "node:path";
 import { homedir, platform, arch, tmpdir } from "node:os";
-import { pipeline } from "node:stream/promises";
 import { createHash } from "node:crypto";
 
 const PIPER_VERSION = "2023.11.14-2";
 const VOICE_NAME = "en_GB-alan-medium";
-const VOICE_SAMPLE_RATE = 22050;
 
 const PIPER_DIR = join(homedir(), ".klaudio", "piper");
 
+// ── Kokoro TTS (primary engine) ─────────────────────────────────
+
+// Default voice per preset vibe
+const KOKORO_PRESET_VOICES = {
+  "retro-8bit": "af_bella",
+  "minimal-zen": "af_heart",
+  "sci-fi-terminal": "af_nova",
+  "victory-fanfare": "af_sky",
+};
+const KOKORO_DEFAULT_VOICE = "af_heart";
+
+// Singleton: reuse the loaded model across calls
+let kokoroInstance = null;
+let kokoroLoadPromise = null;
+
 /**
- * Get the piper release asset name for the current platform.
+ * Load the Kokoro TTS model (singleton, downloads ~86MB on first use).
+ * Uses CPU backend (DirectML has ConvTranspose compatibility issues).
  */
+async function getKokoro() {
+  if (kokoroInstance) return kokoroInstance;
+  if (kokoroLoadPromise) return kokoroLoadPromise;
+
+  kokoroLoadPromise = (async () => {
+    const { KokoroTTS } = await import("kokoro-js");
+    kokoroInstance = await KokoroTTS.from_pretrained(
+      "onnx-community/Kokoro-82M-v1.0-ONNX",
+      { dtype: "q4", device: "cpu" },
+    );
+    return kokoroInstance;
+  })();
+
+  try {
+    return await kokoroLoadPromise;
+  } catch (err) {
+    kokoroLoadPromise = null;
+    throw err;
+  }
+}
+
+/**
+ * Speak text using Kokoro TTS.
+ * Returns true if successful, false if Kokoro is unavailable.
+ */
+async function speakKokoro(text, voice) {
+  const tts = await getKokoro();
+  const voiceId = voice || KOKORO_DEFAULT_VOICE;
+
+  const audio = await tts.generate(text, { voice: voiceId, speed: 1.0 });
+
+  // Save to temp wav and play
+  const hash = createHash("md5").update(text + voiceId).digest("hex").slice(0, 8);
+  const outPath = join(tmpdir(), `klaudio-kokoro-${hash}.wav`);
+  audio.save(outPath);
+
+  const { playSoundWithCancel } = await import("./player.js");
+  await playSoundWithCancel(outPath, { maxSeconds: 0 }).promise.catch(() => {});
+}
+
+// ── Piper TTS (fallback engine) ─────────────────────────────────
+
 function getPiperAssetName() {
   const os = platform();
   const a = arch();
-
   if (os === "win32") return "piper_windows_amd64.zip";
   if (os === "darwin") return a === "arm64" ? "piper_macos_aarch64.tar.gz" : "piper_macos_x64.tar.gz";
-  // Linux
   if (a === "arm64" || a === "aarch64") return "piper_linux_aarch64.tar.gz";
   return "piper_linux_x86_64.tar.gz";
 }
 
-/**
- * Get the piper binary path.
- */
 function getPiperBinPath() {
   const bin = platform() === "win32" ? "piper.exe" : "piper";
   return join(PIPER_DIR, "piper", bin);
 }
 
-/**
- * Get the voice model path.
- */
 function getVoiceModelPath() {
   return join(PIPER_DIR, `${VOICE_NAME}.onnx`);
 }
 
-/**
- * Download a file from a URL to a local path.
- */
 async function downloadFile(url, destPath, onProgress) {
   const res = await fetch(url, { redirect: "follow" });
   if (!res.ok) throw new Error(`Download failed: ${res.status} ${res.statusText}`);
@@ -53,7 +98,6 @@ async function downloadFile(url, destPath, onProgress) {
   const fileStream = createWriteStream(destPath);
   const reader = res.body.getReader();
 
-  // Manual stream piping with progress
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
@@ -71,15 +115,10 @@ async function downloadFile(url, destPath, onProgress) {
   });
 }
 
-/**
- * Extract a .tar.gz or .zip archive.
- */
 async function extractArchive(archivePath, destDir) {
   const os = platform();
-
   if (archivePath.endsWith(".zip")) {
     if (os === "win32") {
-      // Use PowerShell to extract on Windows
       await new Promise((resolve, reject) => {
         execFile("powershell.exe", [
           "-NoProfile", "-Command",
@@ -92,21 +131,14 @@ async function extractArchive(archivePath, destDir) {
       });
     }
   } else {
-    // tar.gz
     await new Promise((resolve, reject) => {
       execFile("tar", ["xzf", archivePath, "-C", destDir], { timeout: 60000 }, (err) => err ? reject(err) : resolve());
     });
   }
 }
 
-/**
- * Ensure piper binary is available, downloading if needed.
- * Returns the path to the piper executable.
- */
 export async function ensurePiper(onProgress) {
   const binPath = getPiperBinPath();
-
-  // Check if already downloaded
   try {
     await stat(binPath);
     return binPath;
@@ -114,7 +146,6 @@ export async function ensurePiper(onProgress) {
 
   try {
     await mkdir(PIPER_DIR, { recursive: true });
-
     const asset = getPiperAssetName();
     const url = `https://github.com/rhasspy/piper/releases/download/${PIPER_VERSION}/${asset}`;
     const archivePath = join(PIPER_DIR, asset);
@@ -127,28 +158,20 @@ export async function ensurePiper(onProgress) {
     if (onProgress) onProgress("Extracting piper...");
     await extractArchive(archivePath, PIPER_DIR);
 
-    // Make executable on Unix
     if (platform() !== "win32") {
       try { await chmod(binPath, 0o755); } catch { /* ignore */ }
     }
 
     return binPath;
   } catch (err) {
-    // Clean up partial downloads
     try { const { unlink } = await import("node:fs/promises"); await unlink(join(PIPER_DIR, getPiperAssetName())); } catch { /* ignore */ }
     throw new Error(`Failed to download piper: ${err.message}`);
   }
 }
 
-/**
- * Ensure voice model is available, downloading if needed.
- * Returns the path to the .onnx model file.
- */
 export async function ensureVoiceModel(onProgress) {
   const modelPath = getVoiceModelPath();
   const configPath = modelPath + ".json";
-
-  // Check if already downloaded
   try {
     await stat(modelPath);
     await stat(configPath);
@@ -157,7 +180,6 @@ export async function ensureVoiceModel(onProgress) {
 
   try {
     await mkdir(PIPER_DIR, { recursive: true });
-
     const baseUrl = `https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_GB/alan/medium`;
 
     if (onProgress) onProgress("Downloading voice model...");
@@ -170,7 +192,6 @@ export async function ensureVoiceModel(onProgress) {
 
     return modelPath;
   } catch (err) {
-    // Clean up partial downloads
     const { unlink } = await import("node:fs/promises");
     try { await unlink(modelPath); } catch { /* ignore */ }
     try { await unlink(configPath); } catch { /* ignore */ }
@@ -178,28 +199,7 @@ export async function ensureVoiceModel(onProgress) {
   }
 }
 
-/**
- * Speak text using macOS `say` command (built-in, good quality).
- */
-function speakMacOS(text) {
-  return new Promise((resolve) => {
-    execFile("say", ["-v", "Daniel", text], { timeout: 15000 }, () => resolve());
-  });
-}
-
-/**
- * Speak text using Piper TTS, with macOS `say` fallback.
- * Auto-downloads piper and voice model on first use.
- * Returns a promise that resolves when speech is done.
- */
-export async function speak(text, onProgress) {
-  if (!text) return;
-
-  // macOS: use built-in `say` — better compatibility, no dylib issues
-  if (platform() === "darwin") {
-    return speakMacOS(text);
-  }
-
+async function speakPiper(text, onProgress) {
   let piperBin, modelPath;
   try {
     [piperBin, modelPath] = await Promise.all([
@@ -207,11 +207,9 @@ export async function speak(text, onProgress) {
       ensureVoiceModel(onProgress),
     ]);
   } catch {
-    // TTS unavailable (download failed, offline, etc.) — skip silently
     return;
   }
 
-  // Generate to temp wav file
   const hash = createHash("md5").update(text).digest("hex").slice(0, 8);
   const outPath = join(tmpdir(), `klaudio-tts-${hash}.wav`);
 
@@ -225,15 +223,58 @@ export async function speak(text, onProgress) {
         if (err) reject(err);
         else resolve();
       });
-      // Feed text via stdin
       child.stdin.write(text);
       child.stdin.end();
     });
 
-    // Play the generated wav
     const { playSoundWithCancel } = await import("./player.js");
     await playSoundWithCancel(outPath, { maxSeconds: 0 }).promise.catch(() => {});
   } catch {
-    // Piper failed (dylib error, etc.) — skip silently
+    // Piper failed — skip silently
   }
 }
+
+// ── macOS fallback ──────────────────────────────────────────────
+
+function speakMacOS(text) {
+  return new Promise((resolve) => {
+    execFile("say", ["-v", "Daniel", text], { timeout: 15000 }, () => resolve());
+  });
+}
+
+// ── Public API ──────────────────────────────────────────────────
+
+/**
+ * Speak text using the best available TTS engine.
+ * Priority: Kokoro (GPU/CPU) → Piper → macOS say
+ *
+ * @param {string} text - Text to speak
+ * @param {object} [options]
+ * @param {string} [options.voice] - Kokoro voice ID (e.g. "af_heart")
+ * @param {Function} [options.onProgress] - Progress callback for downloads
+ */
+export async function speak(text, options = {}) {
+  if (!text) return;
+
+  const { voice, onProgress } = typeof options === "function"
+    ? { voice: null, onProgress: options }  // backwards compat: speak(text, onProgress)
+    : options;
+
+  // Try Kokoro first (works on all platforms, best quality)
+  try {
+    await speakKokoro(text, voice);
+    return;
+  } catch {
+    // Kokoro unavailable — fall through
+  }
+
+  // macOS: use built-in `say`
+  if (platform() === "darwin") {
+    return speakMacOS(text);
+  }
+
+  // Fallback: Piper
+  return speakPiper(text, onProgress);
+}
+
+export { KOKORO_PRESET_VOICES };

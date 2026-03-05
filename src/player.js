@@ -444,7 +444,9 @@ export async function handlePlayCommand(args) {
     const spoken = project ? `${project}: ${summary}` : summary;
     await soundPromise;
     const { speak } = await import("./tts.js");
-    await speak(spoken);
+    const voice = args.find((a) => a.startsWith("--voice="))?.slice(8)
+      || args[args.indexOf("--voice") + 1];
+    await speak(spoken, { voice });
   } else {
     await soundPromise;
   }
@@ -453,8 +455,9 @@ export async function handlePlayCommand(args) {
 /**
  * Generate the shell command string for use in Claude Code hooks.
  */
-export function getHookPlayCommand(soundFilePath, { tts = false } = {}) {
+export function getHookPlayCommand(soundFilePath, { tts = false, voice } = {}) {
   const normalized = soundFilePath.replace(/\\/g, "/");
   const ttsFlag = tts ? " --tts" : "";
-  return `npx klaudio play "${normalized}"${ttsFlag}`;
+  const voiceFlag = tts && voice ? ` --voice ${voice}` : "";
+  return `npx klaudio play "${normalized}"${ttsFlag}${voiceFlag}`;
 }
