@@ -317,7 +317,6 @@ async function speakPiper(text, onProgress) {
 
 function speakMacOS(text) {
   return new Promise((resolve) => {
-    // Try Samantha (high quality US English), fall back to default
     execFile("say", ["-v", "Samantha", text], { timeout: 15000 }, (err) => {
       if (err) {
         execFile("say", [text], { timeout: 15000 }, () => resolve());
@@ -374,13 +373,7 @@ export async function speak(text, options = {}) {
       ? { voice: null, onProgress: options }  // backwards compat: speak(text, onProgress)
       : options;
 
-    // macOS: use built-in `say` (skip Kokoro — native onnxruntime module
-    // can abort the process with a C++ exception before JS can catch it)
-    if (platform() === "darwin") {
-      return speakMacOS(text);
-    }
-
-    // Try Kokoro (best quality, works on Linux/Windows)
+    // Try Kokoro first (works on all platforms, best quality)
     if (await isKokoroAvailable()) {
       try {
         await speakKokoro(text, voice);
@@ -388,6 +381,11 @@ export async function speak(text, options = {}) {
       } catch {
         // Kokoro failed at runtime — fall through
       }
+    }
+
+    // macOS: use built-in `say`
+    if (platform() === "darwin") {
+      return speakMacOS(text);
     }
 
     // Fallback: Piper

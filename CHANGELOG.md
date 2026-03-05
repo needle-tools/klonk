@@ -2,7 +2,7 @@
 
 ## 0.12.3
 
-- **Fix TTS crash on macOS** — skip Kokoro entirely on macOS (native onnxruntime aborts process); use built-in `say` command instead
+- **Fix TTS crash on exit** — onnxruntime native module destructors crash during process cleanup; now uses hard exit to skip destructors after TTS completes
 - **Fix "Updates available" loop** — re-applying hooks now correctly removes legacy hooks (without `_klaudio` marker) before adding new ones
 
 ## 0.12.2
