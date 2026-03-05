@@ -260,9 +260,33 @@ function speakMacOS(text) {
 
 // ── Public API ──────────────────────────────────────────────────
 
+let speaking = false;
+const TTS_LOCK = join(tmpdir(), ".klaudio-tts-lock");
+
+/**
+ * Try to acquire a cross-process TTS lock.
+ * Returns true if acquired, false if another process is speaking.
+ * Stale locks (>30s) are automatically cleaned up.
+ */
+async function acquireTTSLock() {
+  try {
+    const lockStat = await stat(TTS_LOCK);
+    if (Date.now() - lockStat.mtimeMs < 30000) return false; // fresh lock, skip
+  } catch { /* no lock file, good */ }
+  try {
+    await fsWriteFile(TTS_LOCK, String(process.pid), "utf-8");
+    return true;
+  } catch { return false; }
+}
+
+async function releaseTTSLock() {
+  try { const { unlink } = await import("node:fs/promises"); await unlink(TTS_LOCK); } catch { /* ignore */ }
+}
+
 /**
  * Speak text using the best available TTS engine.
  * Priority: Kokoro (GPU/CPU) → Piper → macOS say
+ * Only one speak() call runs at a time — concurrent calls are skipped.
  *
  * @param {string} text - Text to speak
  * @param {object} [options]
@@ -271,26 +295,34 @@ function speakMacOS(text) {
  */
 export async function speak(text, options = {}) {
   if (!text) return;
+  if (speaking) return; // in-process mutex
+  if (!await acquireTTSLock()) return; // cross-process mutex
+  speaking = true;
 
-  const { voice, onProgress } = typeof options === "function"
-    ? { voice: null, onProgress: options }  // backwards compat: speak(text, onProgress)
-    : options;
-
-  // Try Kokoro first (works on all platforms, best quality)
   try {
-    await speakKokoro(text, voice);
-    return;
-  } catch {
-    // Kokoro unavailable — fall through
-  }
+    const { voice, onProgress } = typeof options === "function"
+      ? { voice: null, onProgress: options }  // backwards compat: speak(text, onProgress)
+      : options;
 
-  // macOS: use built-in `say`
-  if (platform() === "darwin") {
-    return speakMacOS(text);
-  }
+    // Try Kokoro first (works on all platforms, best quality)
+    try {
+      await speakKokoro(text, voice);
+      return;
+    } catch {
+      // Kokoro unavailable — fall through
+    }
 
-  // Fallback: Piper
-  return speakPiper(text, onProgress);
+    // macOS: use built-in `say`
+    if (platform() === "darwin") {
+      return speakMacOS(text);
+    }
+
+    // Fallback: Piper
+    return speakPiper(text, onProgress);
+  } finally {
+    speaking = false;
+    await releaseTTSLock();
+  }
 }
 
 export { KOKORO_PRESET_VOICES, KOKORO_VOICES, KOKORO_DEFAULT_VOICE };
