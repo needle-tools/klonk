@@ -373,12 +373,7 @@ export async function speak(text, options = {}) {
       ? { voice: null, onProgress: options }  // backwards compat: speak(text, onProgress)
       : options;
 
-    // macOS: use built-in `say` (Kokoro's native phonemizer module crashes on macOS)
-    if (platform() === "darwin") {
-      return speakMacOS(text);
-    }
-
-    // Try Kokoro (best quality, Linux/Windows)
+    // Try Kokoro (best quality)
     if (await isKokoroAvailable()) {
       try {
         await speakKokoro(text, voice);
@@ -388,8 +383,11 @@ export async function speak(text, options = {}) {
       }
     }
 
-    // Fallback: Piper
-    return speakPiper(text, onProgress);
+    // Fallback: Piper (Linux/Windows), then macOS say
+    if (platform() !== "darwin") {
+      return speakPiper(text, onProgress);
+    }
+    return speakMacOS(text);
   } finally {
     speaking = false;
     await releaseTTSLock();
