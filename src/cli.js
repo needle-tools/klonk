@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from "react"
 import { render, Box, Text, useInput, useApp } from "ink";
 import Spinner from "ink-spinner";
 import { PRESETS, EVENTS } from "./presets.js";
-import { KOKORO_PRESET_VOICES } from "./tts.js";
+import { KOKORO_PRESET_VOICES, KOKORO_VOICES, KOKORO_DEFAULT_VOICE } from "./tts.js";
 import { playSoundWithCancel, getWavDuration } from "./player.js";
 import { getAvailableGames, getSystemSounds } from "./scanner.js";
 import { install, uninstall, getExistingSounds } from "./installer.js";
@@ -1370,10 +1370,11 @@ const ExtractingScreen = ({ game, onDone, onBack }) => {
 };
 
 // ── Screen: Confirm ─────────────────────────────────────────────
-const ConfirmScreen = ({ scope, sounds, tts, onToggleTts, onConfirm, onBack }) => {
+const ConfirmScreen = ({ scope, sounds, tts, voice, onToggleTts, onCycleVoice, onConfirm, onBack }) => {
   useInput((input, key) => {
     if (key.escape) onBack();
     else if (input === "t") onToggleTts();
+    else if (input === "v" && tts) onCycleVoice();
   });
 
   const items = [
@@ -1382,6 +1383,7 @@ const ConfirmScreen = ({ scope, sounds, tts, onToggleTts, onConfirm, onBack }) =
   ];
 
   const soundEntries = Object.entries(sounds).filter(([_, path]) => path);
+  const voiceInfo = KOKORO_VOICES.find((v) => v.id === voice);
 
   return h(Box, { flexDirection: "column" },
     h(Text, { bold: true, marginLeft: 2 }, "  Ready to install:"),
@@ -1398,6 +1400,12 @@ const ConfirmScreen = ({ scope, sounds, tts, onToggleTts, onConfirm, onBack }) =
         ),
         h(Text, { dimColor: true }, "  (t to toggle — reads a short summary when tasks complete)"),
       ),
+      tts && voiceInfo ? h(Box, { marginLeft: 4 },
+        h(Text, { color: ACCENT },
+          `🎙 Voice: ${voiceInfo.name} (${voiceInfo.gender}, ${voiceInfo.accent})`,
+        ),
+        h(Text, { dimColor: true }, "  (v to change voice)"),
+      ) : null,
     ),
     h(Box, { marginTop: 1, marginLeft: 2 },
       h(SelectInput, { indicatorComponent: Indicator, itemComponent: Item, items, onSelect: (item) => {
@@ -1521,6 +1529,7 @@ const InstallApp = () => {
   const [selectedGame, setSelectedGame] = useState(null);
   const [installResult, setInstallResult] = useState(null);
   const [tts, setTts] = useState(true);
+  const [voice, setVoice] = useState(KOKORO_DEFAULT_VOICE);
   const [musicFiles, setMusicFiles] = useState([]);
   const [musicGameName, setMusicGameName] = useState(null);
   const [musicShuffle, setMusicShuffle] = useState(false);
@@ -1569,6 +1578,7 @@ const InstallApp = () => {
             } else {
               setPresetId(id);
               initSoundsFromPreset(id);
+              if (KOKORO_PRESET_VOICES[id]) setVoice(KOKORO_PRESET_VOICES[id]);
               setScreen(SCREEN.PREVIEW);
             }
           },
@@ -1649,7 +1659,12 @@ const InstallApp = () => {
           scope,
           sounds,
           tts,
+          voice,
           onToggleTts: () => setTts((v) => !v),
+          onCycleVoice: () => setVoice((v) => {
+            const idx = KOKORO_VOICES.findIndex((x) => x.id === v);
+            return KOKORO_VOICES[(idx + 1) % KOKORO_VOICES.length].id;
+          }),
           onConfirm: () => setScreen(SCREEN.INSTALLING),
           onBack: () => {
             if (selectedGame) setScreen(SCREEN.GAME_SOUNDS);
@@ -1662,7 +1677,7 @@ const InstallApp = () => {
           scope,
           sounds,
           tts,
-          voice: KOKORO_PRESET_VOICES[presetId],
+          voice,
           onDone: (result) => {
             setInstallResult(result);
             setScreen(SCREEN.DONE);

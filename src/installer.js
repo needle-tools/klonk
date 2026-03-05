@@ -118,7 +118,7 @@ async function installApprovalHooks(settings, soundPath, claudeDir) {
   // Write the timer script
   const script = `#!/usr/bin/env bash
 # klaudio: approval notification timer
-# Plays a sound if a tool isn't approved within DELAY seconds.
+# Plays a sound + speaks a TTS message if a tool isn't approved within DELAY seconds.
 DELAY=15
 MARKER="/tmp/.claude-approval-pending"
 SOUND="${normalized}"
@@ -126,12 +126,16 @@ SOUND="${normalized}"
 case "$1" in
   start)
     TOKEN="$$-$(date +%s%N)"
+    # Store token and CWD so the delayed notification knows the project name
     echo "$TOKEN" > "$MARKER"
+    echo "$PWD" >> "$MARKER"
     (
       sleep "$DELAY"
-      if [ -f "$MARKER" ] && [ "$(cat "$MARKER" 2>/dev/null)" = "$TOKEN" ]; then
+      if [ -f "$MARKER" ] && [ "$(head -1 "$MARKER" 2>/dev/null)" = "$TOKEN" ]; then
+        PROJECT=$(tail -1 "$MARKER" 2>/dev/null | sed 's|.*[/\\\\]||')
         rm -f "$MARKER"
         npx klaudio play "$SOUND" 2>/dev/null
+        npx klaudio say "\${PROJECT:-project} needs your attention" 2>/dev/null
       fi
     ) &
     ;;

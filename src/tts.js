@@ -21,6 +21,22 @@ const KOKORO_PRESET_VOICES = {
 };
 const KOKORO_DEFAULT_VOICE = "af_heart";
 
+// Curated voice list for the picker (best quality voices)
+const KOKORO_VOICES = [
+  { id: "af_heart",  name: "Heart",  gender: "F", accent: "US", grade: "A" },
+  { id: "af_bella",  name: "Bella",  gender: "F", accent: "US", grade: "A-" },
+  { id: "af_nicole", name: "Nicole", gender: "F", accent: "US", grade: "B-" },
+  { id: "af_nova",   name: "Nova",   gender: "F", accent: "US", grade: "C" },
+  { id: "af_sky",    name: "Sky",    gender: "F", accent: "US", grade: "C-" },
+  { id: "af_sarah",  name: "Sarah",  gender: "F", accent: "US", grade: "C+" },
+  { id: "am_fenrir", name: "Fenrir", gender: "M", accent: "US", grade: "C+" },
+  { id: "am_michael",name: "Michael",gender: "M", accent: "US", grade: "C+" },
+  { id: "am_puck",   name: "Puck",   gender: "M", accent: "US", grade: "C+" },
+  { id: "bf_emma",   name: "Emma",   gender: "F", accent: "UK", grade: "B-" },
+  { id: "bm_george", name: "George", gender: "M", accent: "UK", grade: "C" },
+  { id: "bm_fable",  name: "Fable",  gender: "M", accent: "UK", grade: "C" },
+];
+
 // Singleton: reuse the loaded model across calls
 let kokoroInstance = null;
 let kokoroLoadPromise = null;
@@ -277,4 +293,4 @@ export async function speak(text, options = {}) {
   return speakPiper(text, onProgress);
 }
 
-export { KOKORO_PRESET_VOICES };
+export { KOKORO_PRESET_VOICES, KOKORO_VOICES, KOKORO_DEFAULT_VOICE };
