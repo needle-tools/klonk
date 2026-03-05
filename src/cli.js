@@ -137,7 +137,7 @@ const NavHint = ({ back = true, extra = "" }) =>
   );
 
 // ── Screen: Scope ───────────────────────────────────────────────
-const ScopeScreen = ({ onNext, onMusic, onUpdate, tts, onToggleTts, outdatedReasons }) => {
+const ScopeScreen = ({ onNext, onMusic, onUpdate, tts, onToggleTts, voice, hasKokoro, onCycleVoice, outdatedReasons }) => {
   const isOutdated = outdatedReasons && outdatedReasons.length > 0;
   const items = [
     ...(isOutdated ? [{ label: "⬆ Apply updates", value: "_update" }] : []),
@@ -146,7 +146,9 @@ const ScopeScreen = ({ onNext, onMusic, onUpdate, tts, onToggleTts, outdatedReas
     { label: "🎵 Play game music while you code", value: "_music" },
   ];
   const [sel, setSel] = useState(0);
+  const [previewing, setPreviewing] = useState(false);
   const GAP_AT = (isOutdated ? 1 : 0) + 2; // visual gap before music
+  const voiceInfo = hasKokoro ? KOKORO_VOICES.find((v) => v.id === voice) : null;
 
   useInput((input, key) => {
     if (input === "k" || key.upArrow) {
@@ -155,6 +157,15 @@ const ScopeScreen = ({ onNext, onMusic, onUpdate, tts, onToggleTts, outdatedReas
       setSel((i) => Math.min(items.length - 1, i + 1));
     } else if (input === "t") {
       onToggleTts();
+    } else if (input === "v" && tts && hasKokoro) {
+      onCycleVoice();
+      // Preview the new voice
+      setPreviewing(true);
+      const nextIdx = (KOKORO_VOICES.findIndex((x) => x.id === voice) + 1) % KOKORO_VOICES.length;
+      const nextVoice = KOKORO_VOICES[nextIdx];
+      import("../src/tts.js").then(({ speak }) =>
+        speak(`Hi, I'm ${nextVoice.name}`, { voice: nextVoice.id })
+      ).finally(() => setPreviewing(false));
     } else if (key.return) {
       const v = items[sel].value;
       if (v === "_update") onUpdate();
@@ -188,6 +199,14 @@ const ScopeScreen = ({ onNext, onMusic, onUpdate, tts, onToggleTts, outdatedReas
       ),
       h(Text, { dimColor: true }, "  (t to toggle)"),
     ),
+    tts && voiceInfo ? h(Box, { marginLeft: 4 },
+      h(Text, { color: ACCENT },
+        previewing
+          ? `🎙 Voice: ${voiceInfo.name} (previewing...)`
+          : `🎙 Voice: ${voiceInfo.name} (${voiceInfo.gender}, ${voiceInfo.accent})`,
+      ),
+      h(Text, { dimColor: true }, "  (v to change & preview)"),
+    ) : null,
   );
 };
 
@@ -1594,8 +1613,14 @@ const InstallApp = () => {
       case SCREEN.SCOPE:
         return h(ScopeScreen, {
           tts,
+          voice,
+          hasKokoro,
           outdatedReasons,
           onToggleTts: () => setTts((v) => !v),
+          onCycleVoice: () => setVoice((v) => {
+            const idx = KOKORO_VOICES.findIndex((x) => x.id === v);
+            return KOKORO_VOICES[(idx + 1) % KOKORO_VOICES.length].id;
+          }),
           onNext: (s) => {
             setScope(s);
             // Refresh sounds/outdated for the selected scope

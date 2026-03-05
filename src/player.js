@@ -434,7 +434,7 @@ export async function handlePlayCommand(args) {
       .trim();
     // Build summary: include sentences up to ~25 words max.
     // Short next sentences (<4 chars, e.g. version numbers) are always included.
-    const MAX_WORDS = 25;
+    const MAX_WORDS = 50;
     // Split on sentence-ending punctuation, but not periods between digits (0.8.4)
     // or inside filenames (auth.js). A period is "sentence-ending" only if followed
     // by a space+letter, end-of-string, or another sentence-end mark.
