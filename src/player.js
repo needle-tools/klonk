@@ -371,20 +371,22 @@ export async function handlePlayCommand(args) {
   const soundFile = args.find((a) => !a.startsWith("-"));
   const tts = args.includes("--tts");
 
-  // Read stdin (hook JSON) non-blocking
+  // Read stdin (hook JSON) only when TTS or notifications need it
   let hookData = {};
-  try {
-    const chunks = [];
-    process.stdin.setEncoding("utf-8");
-    // Read whatever is available with a short timeout
-    const stdinData = await new Promise((res) => {
-      const timer = setTimeout(() => { process.stdin.pause(); res(chunks.join("")); }, 500);
-      process.stdin.on("data", (chunk) => chunks.push(chunk));
-      process.stdin.on("end", () => { clearTimeout(timer); res(chunks.join("")); });
-      process.stdin.resume();
-    });
-    if (stdinData.trim()) hookData = JSON.parse(stdinData);
-  } catch { /* no stdin or invalid JSON */ }
+  if (tts || args.includes("--notify")) {
+    try {
+      const chunks = [];
+      process.stdin.setEncoding("utf-8");
+      // Read whatever is available with a short timeout
+      const stdinData = await new Promise((res) => {
+        const timer = setTimeout(() => { process.stdin.pause(); res(chunks.join("")); }, 500);
+        process.stdin.on("data", (chunk) => chunks.push(chunk));
+        process.stdin.on("end", () => { clearTimeout(timer); res(chunks.join("")); });
+        process.stdin.resume();
+      });
+      if (stdinData.trim()) hookData = JSON.parse(stdinData);
+    } catch { /* no stdin or invalid JSON */ }
+  }
 
   const notify = args.includes("--notify");
 
@@ -497,5 +499,8 @@ export function getHookPlayCommand(soundFilePath, { tts = false, voice, speed, n
   const voiceFlag = tts && voice ? ` --voice ${voice}` : "";
   const speedFlag = tts && speed && speed !== 1.0 ? ` --speed ${speed}` : "";
   const notifyFlag = notify ? " --notify" : "";
-  return `npx klaudio play "${normalized}"${ttsFlag}${voiceFlag}${speedFlag}${notifyFlag}`;
+  // Resolve the CLI path at install time to avoid npx overhead on every hook call.
+  // When klaudio is updated and re-installed, hooks are rewritten with the new path.
+  const cliPath = new URL("../bin/cli.js", import.meta.url).pathname;
+  return `node "${cliPath}" play "${normalized}"${ttsFlag}${voiceFlag}${speedFlag}${notifyFlag}`;
 }

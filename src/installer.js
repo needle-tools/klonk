@@ -120,6 +120,7 @@ export async function install({ scope, sounds, tts = false, voice, speed } = {})
 async function installApprovalHooks(settings, soundPath, claudeDir) {
   const normalized = soundPath.replace(/\\/g, "/");
   const scriptPath = join(claudeDir, "approval-notify.sh").replace(/\\/g, "/");
+  const cliPath = new URL("../bin/cli.js", import.meta.url).pathname;
 
   // Write the timer script
   const script = `#!/usr/bin/env bash
@@ -128,6 +129,7 @@ async function installApprovalHooks(settings, soundPath, claudeDir) {
 DELAY=120
 MARKER="/tmp/.claude-approval-pending"
 SOUND="${normalized}"
+CLI="${cliPath}"
 
 case "$1" in
   start)
@@ -140,9 +142,9 @@ case "$1" in
       if [ -f "$MARKER" ] && [ "$(head -1 "$MARKER" 2>/dev/null)" = "$TOKEN" ]; then
         PROJECT=$(tail -1 "$MARKER" 2>/dev/null | sed 's|.*[/\\\\]||')
         rm -f "$MARKER"
-        npx klaudio play "$SOUND" 2>/dev/null
-        npx klaudio notify "\${PROJECT:-project}" "Waiting for your approval" 2>/dev/null
-        npx klaudio say "\${PROJECT:-project} needs your attention" 2>/dev/null
+        node "$CLI" play "$SOUND" 2>/dev/null
+        node "$CLI" notify "\${PROJECT:-project}" "Waiting for your approval" 2>/dev/null
+        node "$CLI" say "\${PROJECT:-project} needs your attention" 2>/dev/null
       fi
     ) &
     ;;
