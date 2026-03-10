@@ -294,7 +294,7 @@ const PresetScreen = ({ existingSounds, outdatedReasons, onNext, onReapply, onBa
 
 // ── Screen: Preview ─────────────────────────────────────────────
 const PreviewScreen = ({ presetId, sounds, onAccept, onBack, onUpdateSound }) => {
-  const preset = PRESETS[presetId];
+  const preset = PRESETS[presetId] ?? PRESETS[Object.keys(PRESETS)[0]];
   const eventIds = Object.keys(EVENTS);
   const [currentEvent, setCurrentEvent] = useState(0);
   const [playing, setPlaying] = useState(false);
@@ -1808,7 +1808,8 @@ const InstallApp = () => {
           onConfirm: () => setScreen(SCREEN.INSTALLING),
           onBack: () => {
             if (selectedGame) setScreen(SCREEN.GAME_SOUNDS);
-            else setScreen(SCREEN.PREVIEW);
+            else if (presetId) setScreen(SCREEN.PREVIEW);
+            else setScreen(SCREEN.PRESET);
           },
         });
 

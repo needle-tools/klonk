@@ -1,12 +1,8 @@
 import { readFile, writeFile, mkdir, copyFile } from "node:fs/promises";
 import { join, basename, extname } from "node:path";
 import { homedir } from "node:os";
-import { createRequire } from "node:module";
 import { getHookPlayCommand, processSound } from "./player.js";
 import { EVENTS } from "./presets.js";
-
-const _require = createRequire(import.meta.url);
-const KLAUDIO_VERSION = _require("../package.json").version;
 
 /**
  * Get the target directory based on install scope.
@@ -88,8 +84,6 @@ export async function install({ scope, sounds, tts = false, voice, speed } = {})
 
     // Add our hook
     settings.hooks[hookEvent].push({
-      _klaudio: true,
-      _klaudioVersion: KLAUDIO_VERSION,
       matcher: "",
       hooks: [
         {
@@ -119,39 +113,47 @@ export async function install({ scope, sounds, tts = false, voice, speed } = {})
  */
 async function installApprovalHooks(settings, soundPath, claudeDir) {
   const normalized = soundPath.replace(/\\/g, "/");
-  const scriptPath = join(claudeDir, "approval-notify.sh").replace(/\\/g, "/");
-  const cliPath = new URL("../bin/cli.js", import.meta.url).pathname;
+  const scriptPath = join(claudeDir, "klaudio-approval-notify.js").replace(/\\/g, "/");
 
-  // Write the timer script
-  const script = `#!/usr/bin/env bash
-# klaudio: approval notification timer
-# Plays a sound + sends a system notification if a tool isn't approved within DELAY seconds.
-DELAY=120
-MARKER="/tmp/.claude-approval-pending"
-SOUND="${normalized}"
-CLI="${cliPath}"
+  // Write the timer script (CJS so it works outside any module context)
+  const script = `#!/usr/bin/env node
+'use strict';
+const { writeFileSync, readFileSync, unlinkSync } = require('node:fs');
+const { tmpdir } = require('node:os');
+const { join } = require('node:path');
+const { spawn, spawnSync } = require('node:child_process');
 
-case "$1" in
-  start)
-    TOKEN="$$-$(date +%s%N)"
-    # Store token and CWD so the delayed notification knows the project name
-    echo "$TOKEN" > "$MARKER"
-    echo "$PWD" >> "$MARKER"
-    (
-      sleep "$DELAY"
-      if [ -f "$MARKER" ] && [ "$(head -1 "$MARKER" 2>/dev/null)" = "$TOKEN" ]; then
-        PROJECT=$(tail -1 "$MARKER" 2>/dev/null | sed 's|.*[/\\\\]||')
-        rm -f "$MARKER"
-        node "$CLI" play "$SOUND" 2>/dev/null
-        node "$CLI" notify "\${PROJECT:-project}" "Waiting for your approval" 2>/dev/null
-        node "$CLI" say "\${PROJECT:-project} needs your attention" 2>/dev/null
-      fi
-    ) &
-    ;;
-  cancel)
-    rm -f "$MARKER"
-    ;;
-esac
+const DELAY_MS = 120000;
+const MARKER = join(tmpdir(), '.claude-approval-pending');
+const SOUND = "${normalized}";
+
+const action = process.argv[2];
+
+if (action === 'start') {
+  const token = process.pid + '-' + Date.now();
+  writeFileSync(MARKER, token + '\\n' + process.cwd() + '\\n', 'utf-8');
+  const child = spawn(process.execPath, [__filename, 'timer', token], {
+    detached: true,
+    stdio: 'ignore',
+  });
+  child.unref();
+} else if (action === 'cancel') {
+  try { unlinkSync(MARKER); } catch (_) {}
+} else if (action === 'timer') {
+  const token = process.argv[3];
+  setTimeout(function () {
+    try {
+      const content = readFileSync(MARKER, 'utf-8');
+      const lines = content.trim().split('\\n');
+      if (lines[0] !== token) return;
+      unlinkSync(MARKER);
+      const project = (lines[1] || '').split(/[\\/\\\\]/).pop() || 'project';
+      spawnSync('npx', ['--yes', 'klaudio', 'play', SOUND], { stdio: 'ignore' });
+      spawnSync('npx', ['--yes', 'klaudio', 'notify', project, 'Waiting for your approval'], { stdio: 'ignore' });
+      spawnSync('npx', ['--yes', 'klaudio', 'say', project + ' needs your attention'], { stdio: 'ignore' });
+    } catch (_) {}
+  }, DELAY_MS);
+}
 `;
   await writeFile(scriptPath, script, "utf-8");
 
@@ -161,9 +163,8 @@ esac
     (e) => !e._klaudio && !e._klonk
   );
   settings.hooks.PreToolUse.push({
-    _klaudio: true,
     matcher: "",
-    hooks: [{ type: "command", command: `bash "${scriptPath}" start` }],
+    hooks: [{ type: "command", command: `node "${scriptPath}" start` }],
   });
 
   // Add PostToolUse hook
@@ -172,9 +173,8 @@ esac
     (e) => !e._klaudio && !e._klonk
   );
   settings.hooks.PostToolUse.push({
-    _klaudio: true,
     matcher: "",
-    hooks: [{ type: "command", command: `bash "${scriptPath}" cancel` }],
+    hooks: [{ type: "command", command: `node "${scriptPath}" cancel` }],
   });
 }
 
@@ -218,7 +218,6 @@ async function installCopilotHooks(installedSounds, scope) {
     );
 
     config.hooks[event.copilotHookEvent].push({
-      _klaudio: true,
       type: "command",
       bash: bashCmd,
       powershell: psCmd,
@@ -245,12 +244,12 @@ export async function getExistingSounds(scope) {
     if (!settings.hooks) return sounds;
 
     for (const [eventId, event] of Object.entries(EVENTS)) {
-      // Approval event: read sound from the approval-notify.sh script
+      // Approval event: read sound from the klaudio-approval-notify.js script
       if (eventId === "approval") {
-        const scriptPath = join(claudeDir, "approval-notify.sh");
+        const scriptPath = join(claudeDir, "klaudio-approval-notify.js");
         try {
           const script = await readFile(scriptPath, "utf-8");
-          const m = script.match(/SOUND="([^"]+\.(wav|mp3|ogg|flac|aac))"/);
+          const m = script.match(/SOUND\s*=\s*"([^"]+\.(wav|mp3|ogg|flac|aac))"/);
           if (m) {
             sounds[eventId] = m[1].replace(/\//g, join("a", "b").includes("\\") ? "\\" : "/");
           }
@@ -294,18 +293,6 @@ export async function checkHooksOutdated(scope) {
 
     const isOurs = (e) => e._klaudio || e._klonk || e.hooks?.[0]?.command?.includes("klaudio") || e.hooks?.[0]?.command?.includes(".claude/sounds/");
 
-    // Check if any klaudio hook was installed with an older version
-    const allKlaudioHooks = Object.values(settings.hooks).flat().filter(isOurs);
-    if (allKlaudioHooks.length > 0) {
-      const hasVersionMismatch = allKlaudioHooks.some((e) => e._klaudioVersion !== KLAUDIO_VERSION);
-      if (hasVersionMismatch) {
-        const installedVer = allKlaudioHooks.find((e) => e._klaudioVersion)?._klaudioVersion;
-        reasons.push(installedVer
-          ? `Hooks from v${installedVer} → v${KLAUDIO_VERSION}`
-          : `Hooks need update to v${KLAUDIO_VERSION}`);
-      }
-    }
-
     // Check Stop hook for --notify flag
     const stopEntries = settings.hooks.Stop || [];
     const stopHook = stopEntries.find(isOurs);
@@ -320,22 +307,25 @@ export async function checkHooksOutdated(scope) {
       reasons.push("System notifications on background task");
     }
 
-    // Check approval script for notify command and timer delay
-    const scriptPath = join(claudeDir, "approval-notify.sh");
+    // Check approval script exists as the new Node.js version
+    const oldScriptPath = join(claudeDir, "approval-notify.sh");
+    const newScriptPath = join(claudeDir, "klaudio-approval-notify.js");
     try {
-      const script = await readFile(scriptPath, "utf-8");
-      if (!script.includes("klaudio notify")) {
-        reasons.push("System notifications on approval wait");
-      }
-      const delayMatch = script.match(/DELAY=(\d+)/);
-      if (delayMatch && parseInt(delayMatch[1]) < 120) {
+      await readFile(oldScriptPath, "utf-8");
+      // Old bash script still present — needs upgrade
+      reasons.push("Approval timer upgraded to cross-platform Node.js");
+    } catch { /* old script gone, good */ }
+    try {
+      const script = await readFile(newScriptPath, "utf-8");
+      const delayMatch = script.match(/DELAY_MS\s*=\s*(\d+)/);
+      if (delayMatch && parseInt(delayMatch[1]) < 120000) {
         reasons.push("Approval timer too short (now 120s)");
       }
     } catch { /* no script */ }
 
     // Check for duplicate hooks (old bug)
     for (const [event, entries] of Object.entries(settings.hooks)) {
-      const klaudioEntries = entries.filter((e) => e._klaudio || e._klonk);
+      const klaudioEntries = entries.filter(isOurs);
       if (klaudioEntries.length > 1) {
         reasons.push(`Duplicate ${event} hooks`);
       }

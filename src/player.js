@@ -499,8 +499,5 @@ export function getHookPlayCommand(soundFilePath, { tts = false, voice, speed, n
   const voiceFlag = tts && voice ? ` --voice ${voice}` : "";
   const speedFlag = tts && speed && speed !== 1.0 ? ` --speed ${speed}` : "";
   const notifyFlag = notify ? " --notify" : "";
-  // Resolve the CLI path at install time to avoid npx overhead on every hook call.
-  // When klaudio is updated and re-installed, hooks are rewritten with the new path.
-  const cliPath = new URL("../bin/cli.js", import.meta.url).pathname;
-  return `node "${cliPath}" play "${normalized}"${ttsFlag}${voiceFlag}${speedFlag}${notifyFlag}`;
+  return `npx --yes klaudio play "${normalized}"${ttsFlag}${voiceFlag}${speedFlag}${notifyFlag}`;
 }

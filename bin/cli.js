@@ -52,6 +52,27 @@ if (["help", "--help", "-h"].includes(process.argv[2])) {
   process.exit(0);
 }
 
+// Auto-update: check npm for a newer version and install it before showing UI
+async function autoUpdate() {
+  try {
+    const { createRequire } = await import("node:module");
+    const pkg = createRequire(import.meta.url)("../package.json");
+    const res = await fetch(`https://registry.npmjs.org/${pkg.name}/latest`, {
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!res.ok) return;
+    const { version: latest } = await res.json();
+    if (latest === pkg.version) return;
+    console.log(`\n  Updating klaudio ${pkg.version} → ${latest}...\n`);
+    const { spawnSync } = await import("node:child_process");
+    spawnSync("npm", ["install", "-g", "klaudio@latest"], { stdio: "inherit" });
+    // Re-exec so the UI runs under the new version
+    const result = spawnSync("npx", ["--yes", "klaudio"], { stdio: "inherit" });
+    process.exit(result.status ?? 0);
+  } catch { /* ignore network/registry errors */ }
+}
+await autoUpdate();
+
 // Default: interactive installer UI
 const { run } = await import("../src/cli.js");
 
